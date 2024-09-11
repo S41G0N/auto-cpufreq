@@ -15,7 +15,7 @@ from warnings import filterwarnings
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
-    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR
+    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.power_helper import *
 
@@ -54,9 +54,6 @@ if IS_INSTALLED_WITH_SNAP:
 else:
     auto_cpufreq_stats_path = Path("/var/run/auto-cpufreq.stats")
     governor_override_state = Path("/opt/auto-cpufreq/override.pickle")
-
-# daemon check
-dcheck = getoutput("snapctl get daemon")
 
 def file_stats():
     global auto_cpufreq_stats_file
@@ -298,6 +295,8 @@ def footer(l=79): print("\n" + "-" * l + "\n")
 def deploy_complete_msg():
     print("\n" + "-" * 17 + " auto-cpufreq daemon installed and running " + "-" * 17 + "\n")
     print("To view live stats, run:\nauto-cpufreq --stats")
+    print("\nauto-cpufreq makes all decisions automatically, if you would like to")
+    print("configure certain setting to your own liking, please refer to:\nhttps://github.com/AdnanHodzic/auto-cpufreq#configuring-auto-cpufreq")
     print("\nTo disable and remove auto-cpufreq daemon, run:\nsudo auto-cpufreq --remove")
     footer()
 
@@ -505,6 +504,18 @@ def set_platform_profile(conf, profile):
             print(f'Setting to use: "{pp}" Platform Profile')
             run(f"cpufreqctl.auto-cpufreq --pp --set={pp}", shell=True)
 
+def set_energy_perf_bias(conf, profile):
+    if Path("/sys/devices/system/cpu/intel_pstate").exists() is False:
+        print('Not setting EPB (not supported by system)')
+        return
+    epb = "balance_performance" if profile == "charger" else "balance_power"
+    if conf.has_option(profile, "energy_perf_bias"):
+        epb = conf[profile]["energy_perf_bias"]
+
+    run(f"cpufreqctl.auto-cpufreq --epb --set={epb}", shell=True)
+    print(f'Setting to use: "{epb}" EPB')
+
+
 def set_powersave():
     conf = config.get_config()
     gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
@@ -532,6 +543,7 @@ def set_powersave():
                 run("cpufreqctl.auto-cpufreq --epp --set=balance_power", shell=True)
                 print('Setting to use: "balance_power" EPP')
 
+    set_energy_perf_bias(conf, "battery")
     set_platform_profile(conf, "battery")
     set_frequencies()
 
@@ -638,7 +650,8 @@ def set_performance():
                 else:
                     run("cpufreqctl.auto-cpufreq --epp --set=balance_performance", shell=True)
                     print('Setting to use: "balance_performance" EPP')
-
+    
+    set_energy_perf_bias(conf, "charger")
     set_platform_profile(conf, "charger")
     set_frequencies()
 
@@ -857,7 +870,7 @@ def sysinfo():
             for sensor in temp_sensors:
                 # iterate over all temperatures in the current sensor
                 for temp in temp_sensors[sensor]:
-                    if 'CPU' in temp.label and temp.current != 0:
+                    if ('CPU' in temp.label or 'Tctl' in temp.label) and temp.current != 0:
                         temp_per_cpu = [temp.current] * online_cpu_count
                         break
                 else: continue
@@ -917,7 +930,7 @@ def running_daemon_check():
     if is_running("auto-cpufreq", "--daemon"):
         daemon_running_msg()
         exit(1)
-    elif IS_INSTALLED_WITH_SNAP and dcheck == "enabled":
+    elif IS_INSTALLED_WITH_SNAP and SNAP_DAEMON_CHECK == "enabled":
         daemon_running_msg()
         exit(1)
 
@@ -926,6 +939,6 @@ def not_running_daemon_check():
     if not is_running("auto-cpufreq", "--daemon"):
         daemon_not_running_msg()
         exit(1)
-    elif IS_INSTALLED_WITH_SNAP and dcheck == "disabled":
+    elif IS_INSTALLED_WITH_SNAP and SNAP_DAEMON_CHECK == "disabled":
         daemon_not_running_msg()
         exit(1)
